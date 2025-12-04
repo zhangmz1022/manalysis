@@ -11,6 +11,55 @@ import matplotlib.pyplot as plt
 from visanalysis.util import plot_tools
 from collections.abc import Sequence
 
+def backgroundSubtract(ImagingData, roi_name):
+    pass
+
+def computeROIMatrixDFF(roi_response_matrix, baseline_window):
+    """
+    Computes dF/F for a matrix of ROI responses by calling computeBaselineFittingDFF for each ROI
+
+    Params:
+        -roi_response_matrix: 2D np.array of shape (no_rois, no_timepoints)
+        -baseline_window: tuple of (start_time, end_time) for fitting baseline
+
+    Returns:
+        -dff_response_matrix: 2D np.array of dF/F responses shape (no_rois, no_timepoints)
+    """
+    pass
+
+def computeBaselineFittingDFF(bksresponse, time_vector, baseline_window):
+    """
+    Computes dF/F by fitting F0 using a sum of two exponentials to the baseline period
+
+    Params:
+        -bksresponse: 1D np.array of background subtracted single ROI response
+        -time_vector: 1D np.array of time points corresponding to bksresponse
+        -baseline_window: tuple of (start_time, end_time) for fitting baseline
+
+    Returns:
+        -dff_response: 1D np.array of dF/F response
+    """
+    pass
+
+def getEpochResponseResampled(ImagingData, roi_name, epoch_index, resample_bin_frequency=120, dFF=True):
+    """
+    Get epoch reponse matrix by resampling to a fixed bin frequency for each ROI. Need to indicate
+    which epoches to 
+
+    Params:
+        -ImagingData: an ImagingData Object (a T-series) with ROI defined
+        -roi_name: string, name of the group of ROIs
+        -epoch_index: (int) 1D np.array, the index of the epoch of interest to average together
+        -resample_bin_frequency: frequency (in Hz) to resample the epoch responses to, default 120Hz
+
+    Returns:
+        -resampled_roi_response: dict with keys:
+            -'epoch_response': 2D np.array of shape (no_rois, no_resampled_timepoints_in_an_epoch)
+            -'time_vector': 1D np.array of time points corresponding to epoch_response
+
+    """
+    pass
+
 
 def matchQuery(epoch_parameters, query):
     """
@@ -51,7 +100,7 @@ def plotResponseByCondition(ImagingData, roi_name, condition, eg_ind=0):
     for p_ind, param_value in enumerate(unique_parameter_values):
         query = {condition: param_value}
         trials = filterTrials(roi_data.get('epoch_response'), ImagingData, query)
-        ax[p_ind].plot(roi_data.get('time_vector'), np.mean(trials[eg_ind, :, :], axis=0), linestyle='-', color=ImagingData.colors[0])
+        ax[p_ind].plot(roi_data.get('time_vector'), np.nanmean(trials[eg_ind, :, :], axis=0), linestyle='-', color=ImagingData.colors[0])
 
         if p_ind == 0:  # scale bar
             plot_tools.addScaleBars(ax[p_ind], dT=1, dF=0.5, F_value=-0.25, T_value=-0.2)
@@ -60,15 +109,15 @@ def plotResponseByCondition(ImagingData, roi_name, condition, eg_ind=0):
 def plotRoiResponses(ImagingData, roi_name):
     roi_data = ImagingData.getRoiResponses(roi_name)
 
-    fh, ax = plt.subplots(1, int(roi_data.get('epoch_response').shape[0]+1), figsize=(30, 2))
+    fh, ax = plt.subplots(1, int(roi_data.get('epoch_response').shape[0]+1), figsize=(6, 2))
     [x.set_axis_off() for x in ax]
-    [x.set_ylim([-0.25, 1]) for x in ax]
+    # [x.set_ylim([-0.25, 1]) for x in ax]
 
     for r_ind in range(roi_data.get('epoch_response').shape[0]):
         time_vector = roi_data.get('time_vector')
         no_trials = roi_data.get('epoch_response')[r_ind, :, :].shape[0]
-        current_mean = np.mean(roi_data.get('epoch_response')[r_ind, :, :], axis=0)
-        current_std = np.std(roi_data.get('epoch_response')[r_ind, :, :], axis=0)
+        current_mean = np.nanmean(roi_data.get('epoch_response')[r_ind, :, :], axis=0)
+        current_std = np.nanstd(roi_data.get('epoch_response')[r_ind, :, :], axis=0)
         current_sem = current_std / np.sqrt(no_trials)
 
         ax[r_ind].plot(time_vector, current_mean, 'k')
@@ -80,6 +129,9 @@ def plotRoiResponses(ImagingData, roi_name):
 
         if r_ind == 0:  # scale bar
             plot_tools.addScaleBars(ax[r_ind], 1, 1, F_value=-0.1, T_value=-0.2)
+
+def plotSingleRoiResponseByCondition(ImagingData, roi_name, roi_ind, condition):
+    pass
 
 
 def filterDataFiles(data_directory,

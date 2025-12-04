@@ -45,7 +45,7 @@ class ImagingDataObject:
     def __init__(self, file_path, series_number, quiet=False, cfg_dict=None):
         self.file_path = file_path
         self.series_number = series_number
-        self.quiet = quiet
+        self.quiet = quiet # suppress console output for channel processing if True
 
         self.colors = [mcolors.to_rgb(x) for x in list(mcolors.TABLEAU_COLORS)[:20]]
 
@@ -214,18 +214,6 @@ class ImagingDataObject:
 
         return subject_metadata
 
-    def getFlyMetadata(self, metadata_key=None):
-        """
-        Deprecated soon. Use getSubjectMetadata instead.
-
-        Return fly metadata
-
-        :metadata_key: name of metadata item to return. If None, return all metadata as dict. Default=None
-
-        """
-        print("WARNING: getFlyMetadata will soon be deprecated. Use getSubjectMetadata instead.")
-
-        return self.getSubjectMetadata(metadata_key=metadata_key)
 
     def getAcquisitionMetadata(self, metadata_key=None):
         """
@@ -300,24 +288,6 @@ class ImagingDataObject:
             ]  # sec
 
             return response_timing
-
-    def getVolumeFrameOffsets(self):
-        """
-        For volumetric scans, return temporal offset for each z slice relative to frame_times
-
-        returns: frame_offsets (sec), temporal sample offset for each z slice component of a volume
-        """
-        with h5py.File(self.file_path, "r+") as experiment_file:
-            find_partial = functools.partial(h5io.find_series, sn=self.series_number)
-            series_group = experiment_file.visititems(find_partial)
-            acquisition_group = series_group["acquisition"]
-            frame_times = np.asarray(acquisition_group.get("frame_times"))
-        # initialize frame_offsets and populate
-        frame_offsets = np.zeros(frame_times.shape[1])
-        for frame_ind in range(0, frame_times.shape[1]):
-            # offsets are consitent for every single volume, so we only need to do this calculation once for each z-slice
-            frame_offsets[frame_ind] = frame_times[0, frame_ind] - frame_times[0, 0]
-        return frame_offsets
 
     def getStimulusTiming(self, plot_trace_flag=False):
         """
@@ -534,237 +504,6 @@ class ImagingDataObject:
 
         return channel_timing[self.timing_channel_ind]
 
-    def getBehaviorTiming(self, use_camera_timestamps=False):
-        """
-        Get behavior timing (e.g. behavior camera exposures)
-
-        Returns:
-            response_timing: dict
-
-        """
-        with h5py.File(self.file_path, "r") as experiment_file:
-            find_partial = functools.partial(h5io.find_series, sn=self.series_number)
-            epoch_run_group = experiment_file.visititems(find_partial)
-            behavior_group = epoch_run_group["behavior"]
-
-            behavior_timing = {}
-            cam_group_names = [
-                x
-                for x in behavior_group.keys()
-                if isinstance(behavior_group[x], h5py.Group) and x != "log_lines"
-            ]
-            for cam_name in cam_group_names:
-                if use_camera_timestamps and 'fictrac' in cam_name.lower():
-                    continue
-                cam_group = behavior_group[cam_name]
-                cam_timing = {}
-                cam_timing["frame_time"] = cam_group.get("exposure_onset")[:]  # sec
-                cam_timing["exposure_time"] = cam_group.attrs["exposure_time"]  # sec
-                cam_timing["frame_rate"] = cam_group.attrs["frame_rate"]  # Hz
-                behavior_timing[cam_name] = cam_timing
-
-            # Fictrac data exists, but no fictrac camera group with precise timing
-            fictrac_cam_group_candidates = [
-                x for x in cam_group_names if "fictrac" in x.lower()
-            ]
-            if (
-                (use_camera_timestamps or len(fictrac_cam_group_candidates) == 0) 
-                and 'fictrac_data' in behavior_group.keys()
-            ):                
-                fictrac_header = behavior_group["fictrac_data"].attrs[
-                    "fictrac_data_header"
-                ]
-                frame_time = (
-                    behavior_group["fictrac_data"][
-                        :, np.where(fictrac_header == "timestamp")[0][0]
-                    ]
-                    / 1000
-                )
-                frame_rate = 1 / np.mean(np.diff(frame_time))
-
-                behavior_timing["fictrac"] = {}
-                behavior_timing["fictrac"]["frame_time"] = frame_time
-                behavior_timing["fictrac"]["frame_rate"] = frame_rate
-
-            return behavior_timing
-
-    def getBehaviorData(self, stimulus_timing, use_camera_timestamps=False, quiet=True):
-        """
-        Get Fictrac data
-        """
-
-        run_params = self.getRunParameters()
-        loco_pos_closed_loop = run_params.get('loco_pos_closed_loop', False)
-
-        epoch_params = self.getEpochParameters()
-        n_epochs = len(epoch_params)
-        behavior_timing = self.getBehaviorTiming(use_camera_timestamps=use_camera_timestamps)
-
-        fictrac_timing_candidates = [
-            x for x in behavior_timing.keys() if "fictrac" in x.lower()
-        ]
-        if len(fictrac_timing_candidates) == 0:
-            print("No Fictrac data found.")
-            return None
-        elif len(fictrac_timing_candidates) > 1:
-            print("Multiple Fictrac data found. Using first one.")
-        fictrac_timestamps = behavior_timing[fictrac_timing_candidates[0]]["frame_time"]
-
-        with h5py.File(self.file_path, "r") as experiment_file:
-            find_partial = functools.partial(h5io.find_series, sn=self.series_number)
-            epoch_run_group = experiment_file.visititems(find_partial)
-            behavior_group = epoch_run_group["behavior"]
-
-            if "fictrac_data" in behavior_group.keys():
-                header = behavior_group["fictrac_data"].attrs["fictrac_data_header"]
-                if behavior_group['fictrac_data'].shape[1] != len(header):
-                    n_headers_to_use = min(behavior_group['fictrac_data'].shape[1], len(header))
-                    print('WARNING! Fictrac data header length does not match data length. Using first {} headers.'.format(n_headers_to_use))
-                else:
-                    n_headers_to_use = len(header)
-
-                fictrac_data = pd.DataFrame(
-                    behavior_group["fictrac_data"][:], columns=header
-                )
-                fictrac_data = fictrac_data.astype(
-                    {"frame_count": int, "sequence_number": int}
-                )
-                fictrac_data = fictrac_data.set_index("frame_count")
-            else:
-                print("No Fictrac data found in the HDF data file.")
-                return
-
-            if "log_lines" in behavior_group.keys():
-                log_group = behavior_group["log_lines"]
-                set_pos_0_groups = [
-                    (
-                        log_group[line_name]["set_pos_0"],
-                        log_group[line_name].attrs["ts"],
-                    )
-                    for line_name in log_group.keys()
-                    if "set_pos_0" in log_group[line_name].keys()
-                ]
-
-                if loco_pos_closed_loop:
-                    assert len(set_pos_0_groups) == n_epochs
-
-                    set_pos_0_frame_nums = [
-                        set_pos_0_group.attrs["frame_num"]
-                        for set_pos_0_group, ts in set_pos_0_groups
-                    ]  # 1:1 correspondence to epochs
-
-        # Trim Fictrac timestamps and data to the min length of the two
-        if not quiet:
-            print(f'{len(fictrac_timestamps)} strobes detected.')
-            print(f'{len(fictrac_data)} Fictrac data lines detected.')
-        n_fictrac_valid_frames = min(len(fictrac_timestamps), len(fictrac_data))
-        fictrac_timestamps = fictrac_timestamps[:n_fictrac_valid_frames]
-        fictrac_data = fictrac_data[:n_fictrac_valid_frames]
-
-        ##### Pull out Fictrac data for each epoch #####
-
-        stim_start_times = stimulus_timing["stimulus_start_times"]  # from photodiodes
-        stim_end_times = stimulus_timing["stimulus_end_times"]  # from photodiodes
-
-        assert len(stim_start_times) == len(stim_end_times)
-
-        if len(stim_start_times) < n_epochs:
-            print(
-                "CAUTION! stimulus_timing has length less than number of epochs. Trimming # of epochs."
-            )
-            n_epochs = len(stim_start_times)
-
-        run_params = self.getRunParameters()
-        epoch_params = self.getEpochParameters()
-        first_iti = epoch_params[0]["pre_time"] # + epoch_params[0]["tail_time"]
-
-        fictrac_data_for_epoch = []
-        ts_pointer = 0
-        prev_ts_pointer = 0
-
-        # Epoch -1:
-        current_stim_end_time = (
-            stim_start_times[0] - first_iti
-        )  # "stim end time" for epoch -1
-        # Find Fictrac index and timestamp for when stimulus starts
-        while fictrac_timestamps[ts_pointer] <= current_stim_end_time:
-            ts_pointer += 1
-        current_stim_end_fictrac_index = ts_pointer
-        # current_stim_end_fictrac_timestamp = fictrac_timestamps[ts_pointer]
-
-        next_stim_start_time = stim_start_times[0]
-        # Find Fictrac index and timestamp for when next stimulus starts
-        while fictrac_timestamps[ts_pointer] <= next_stim_start_time:
-            ts_pointer += 1
-        next_stim_start_fictrac_index = ts_pointer
-        # next_stim_start_fictrac_timestamp = fictrac_timestamps[ts_pointer]
-
-        if not quiet:
-            print("Pulling out Fictrac data for each epoch...")
-        for e in range(n_epochs):
-            if not quiet:
-                print(f"Epoch {e+1}/{n_epochs}")
-            prev_stim_end_fictrac_index = current_stim_end_fictrac_index
-            # prev_stim_end_fictrac_timestamp = current_stim_end_fictrac_timestamp
-            current_stim_start_fictrac_index = next_stim_start_fictrac_index
-            # current_stim_start_fictrac_timestamp = next_stim_start_fictrac_timestamp
-
-            current_stim_start_time = stim_start_times[e]
-            current_stim_end_time = stim_end_times[e]
-
-            # print(current_stim_end_time - current_stim_start_time)
-            # print(fictrac_timestamps[ts_pointer])
-            # print(current_stim_end_time)
-
-            # Find Fictrac index and timestamp for when stimulus ends
-            while (
-                ts_pointer < len(fictrac_timestamps)
-                and fictrac_timestamps[ts_pointer] <= current_stim_end_time
-            ):
-                # if fictrac_timestamps[ts_pointer] > 1200:
-                #     print(fictrac_timestamps[ts_pointer])
-                ts_pointer += 1
-            current_stim_end_fictrac_index = ts_pointer - 1
-            # current_stim_end_fictrac_timestamp = fictrac_timestamps[ts_pointer]
-
-            if e < n_epochs - 1:
-                next_stim_start_time = stim_start_times[e + 1]
-            else:
-                next_stim_start_time = current_stim_end_time + epoch_params[e]['tail_time'] # last trial only gets its tail_time
-            # Find Fictrac index and timestamp for when stimulus starts
-            while (
-                ts_pointer < len(fictrac_timestamps)
-                and fictrac_timestamps[ts_pointer] <= next_stim_start_time
-            ):
-                ts_pointer += 1
-                if ts_pointer == len(fictrac_timestamps):
-                    print("Reached end of fictrac_timestamps")
-
-            next_stim_start_fictrac_index = ts_pointer
-            # next_stim_start_fictrac_timestamp = fictrac_timestamps[ts_pointer]
-
-            # define which Fictrac frame corresponds to the first frame of the epoch
-            if loco_pos_closed_loop:
-                epoch_start_frame_num = set_pos_0_frame_nums[e]
-                if not quiet:
-                    print(f'Epoch {e+1}/{n_epochs}: set_pos_0 occurred {epoch_start_frame_num-prev_stim_end_fictrac_index} frames since last stim end')
-            else:
-                epoch_start_frame_num = current_stim_start_fictrac_index
-                
-            epoch_fictrac_data = fictrac_data.iloc[prev_stim_end_fictrac_index:next_stim_start_fictrac_index].copy()
-            # print(f'{len(epoch_fictrac_data)} Fictrac frames')
-            epoch_fictrac_data["integrated_xpos"] -= epoch_fictrac_data["integrated_xpos"][epoch_start_frame_num]
-            epoch_fictrac_data["integrated_ypos"] -= epoch_fictrac_data["integrated_ypos"][epoch_start_frame_num]
-            epoch_fictrac_data["integrated_heading"] = np.unwrap(epoch_fictrac_data["integrated_heading"])
-            epoch_fictrac_data["integrated_heading"] -= epoch_fictrac_data["integrated_heading"][epoch_start_frame_num]
-            epoch_fictrac_data["integrated_heading"] = (np.mod((epoch_fictrac_data["integrated_heading"] + np.pi), np.pi * 2) - np.pi)
-
-            epoch_fictrac_timestamps = np.copy(fictrac_timestamps[prev_stim_end_fictrac_index:next_stim_start_fictrac_index])
-            epoch_fictrac_timestamps -= current_stim_start_time
-            fictrac_data_for_epoch.append({"timestamps": epoch_fictrac_timestamps, "data": epoch_fictrac_data})
-
-        return fictrac_data_for_epoch
-
     def getRoiSetNames(self, roi_prefix="rois"):
         """
 
@@ -847,6 +586,7 @@ class ImagingDataObject:
             Params:
                 region_response: Matrix of region/voxel responses. Shape = (n regions, time)
                 dff: (Bool) convert from raw intensity value to dF/F based on mean of pre_time
+                use_shortest_epoch_length: (Bool) if True, use the shortest epoch length for all epochs instead of the longest
 
             Returns:
                 time_vector (1d array): 1d array, time values for response_matrix trace with longest epoch time (sec)
@@ -895,23 +635,40 @@ class ImagingDataObject:
         # Note response_matrix is padded by nan out to longest epoch length. Different epoch lengths may result in a jagged array with nans backfilled
         response_matrix = np.empty(shape=(no_regions, no_trials, max_epoch_frames), dtype=float)
         response_matrix[:] = np.nan
-       
+
+        min_frame_len = max_epoch_frames
+
         for idx in range(no_trials):
             current_trial_inds = get_image_inds(idx)
+            # keep track of the shortest observed trial length (in frames)
+            min_frame_len = min(min_frame_len, len(current_trial_inds))
+            
+
             if len(current_trial_inds) == 0:
                 warnings.warn('SKIPPING TRIAL {}: No frames collected during trial'.format(idx))
                 continue
 
-            if len(current_trial_inds) < epoch_frames[idx]:
-                warnings.warn('SKIPPING TRIAL {}: Expected {} frames, found {} '.format(idx, epoch_frames[idx], len(current_trial_inds)))
-                continue
+            # if len(current_trial_inds) < epoch_frames[idx]:
+                # 112125 mz commented out the skipping, changed to padding with nans instead
+                # it definetly can happen when imaging frame rate is not multiple of stimulus frame rate!!
+                # warnings.warn('SKIPPING TRIAL {}: Expected {} frames, found {} '.format(idx, epoch_frames[idx], len(current_trial_inds)))
+                # continue
+            new_epoch_response = np.full((no_regions, epoch_frames[idx]), np.nan)
 
-            new_epoch_response = region_response[:, current_trial_inds]
+            legit_inds = min(len(current_trial_inds), epoch_frames[idx])
+
+            new_epoch_response[:, :legit_inds] = region_response[:, current_trial_inds[:legit_inds]]
 
             if dff:
                 new_epoch_response = get_dff(new_epoch_response, idx)
                 
-            response_matrix[:, idx, :epoch_frames[idx]] = new_epoch_response[:, :epoch_frames[idx]]                
+            response_matrix[:, idx, :epoch_frames[idx]] = new_epoch_response[:, :epoch_frames[idx]]
+
+        # 11212025 mz: Trim response_matrix and time_vector to the shortest observed epoch
+        # length if that length is smaller than the maximum epoch length.
+        if 0 < min_frame_len < max_epoch_frames:
+            response_matrix = response_matrix[:, :, :min_frame_len]
+            time_vector = time_vector[:min_frame_len]
 
         return time_vector, response_matrix
 
@@ -921,11 +678,13 @@ class ImagingDataObject:
 
     def getEpochGroupingsByParameters(self, parameter_key=None, replace_parameter_value=None):
         """
-        getEpochGroupingsByParameters(sel f, parameter_key=None)
+        getEpochGroupingsByParameters(self, parameter_key=None)
         Returns unique parameter combinations and indices of epochs that fall into each combination.
         Params:
             -parameter_key:
                 -None (default): conditions on any parameter(s) containing "current" or "component"
+                    - 112125 mz: stimpack does not have "current" or "component" in any param names,
+                       so defaulting to no parameters
                 -string: name of a single protocol parameter you want to split on
                 -List of strings: multiple params to split on
             -replace_parameter_value:

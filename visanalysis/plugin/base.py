@@ -184,19 +184,19 @@ class BasePlugin():
     # roi display computation functions
     def getRoiResponse_TrialAverage(self, roi_response):
         time_vector, response_matrix = self.ImagingDataObject.getEpochResponseMatrix(np.vstack(roi_response), dff=False)
-        trial_avg = np.mean(response_matrix, axis=(0, 1))
+        trial_avg = np.nanmean(response_matrix, axis=(0, 1))
         return trial_avg
 
     def getRoiResponse_TrialAverageBright(self, roi_response):
         time_vector, response_matrix = self.ImagingDataObject.getEpochResponseMatrix(np.vstack(roi_response), dff=False)
         query = {'current_intensity': 1}
         response_matrix_filt = shared_analysis.filterTrials(response_matrix, self.ImagingDataObject, query, return_inds=False)
-        trial_avg = np.mean(response_matrix_filt, axis=(0, 1))
+        trial_avg = np.nanmean(response_matrix_filt, axis=(0, 1))
         return trial_avg
 
     def getRoiResponse_TrialAverageDFF(self, roi_response):
         time_vector, response_matrix = self.ImagingDataObject.getEpochResponseMatrix(np.vstack(roi_response), dff=True)
-        trial_avg = np.mean(response_matrix, axis=(0, 1))
+        trial_avg = np.nanmean(response_matrix, axis=(0, 1))
         return trial_avg
 
     def getRoiResponse_RawTrace(self, roi_response):
@@ -204,7 +204,7 @@ class BasePlugin():
 
     def getRoiResponse_TrialResponses(self, roi_response):
         time_vector, response_matrix = self.ImagingDataObject.getEpochResponseMatrix(np.vstack(roi_response), dff=False)
-        TrialResponses = np.mean(response_matrix, axis=0).T
+        TrialResponses = np.nanmean(response_matrix, axis=0).T
         return TrialResponses
 
     def dataIsAttached(self, file_path, series_number):

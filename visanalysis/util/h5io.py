@@ -113,7 +113,8 @@ def getDataType(file_path):
 
 
 def find_series(name, obj, sn):
-    target_group_name = 'series_{}'.format(str(sn).zfill(3))
+    """This will only return the first match found, so the epoch groups will not be inside the returned group."""
+    target_group_name = 'series_{}'.format(str(sn).zfill(3)) # returns 'series_003' for sn=3 zfills means to pad with zeros to length 3
     if target_group_name in name:
         return obj
 

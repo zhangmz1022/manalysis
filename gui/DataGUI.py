@@ -410,7 +410,7 @@ class DataGUI(QWidget):
         file_path = os.path.join(self.experiment_file_directory, self.experiment_file_name + '.hdf5')
         data_type = h5io.getDataType(file_path)
         # Load plugin based on Rig name in hdf5 file
-        if data_type == 'Bruker':
+        if 'Bruker' in data_type:
             from visanalysis.plugin import bruker
             self.plugin = bruker.BrukerPlugin()
         elif data_type == 'AODscope':
@@ -419,6 +419,7 @@ class DataGUI(QWidget):
         else:
             from visanalysis.plugin import base
             self.plugin = base.BasePlugin()
+        
 
         self.plugin.parent_gui = self
 
@@ -449,9 +450,12 @@ class DataGUI(QWidget):
 
         self.currentImageFileNameLabel.setText(self.image_file_name)
 
+
+
         # show roi image
         if self.series_number is not None:
             if self.data_directory is not None:  # user has selected a raw data directory
+
                 self.plugin.updateImageSeries(data_directory=self.data_directory,
                                               image_file_name=self.image_file_name,
                                               series_number=self.series_number,
@@ -629,6 +633,7 @@ class DataGUI(QWidget):
             current_raw_trace = np.squeeze(self.roi_response[self.current_roi_index])
             fxn_name = self.RoiResponseTypeComboBox.currentText()
             display_trace = getattr(self.plugin, 'getRoiResponse_{}'.format(fxn_name))([current_raw_trace])
+            print("display_trace:", display_trace)
             self.responsePlot.plot(display_trace, color=self.colors[self.current_roi_index], linewidth=1, alpha=0.5)
             self.responsePlot.set_xlim([0, len(display_trace)])
             y_min = np.nanmin(display_trace)
