@@ -1,8 +1,7 @@
+This is a branch of [visanalysis](https://github.com/ClandininLab/visanalysis) project.
+
 # visanalysis
 Visanalysis is an analysis environment for [visprotocol](github.com/clandininlab/visprotocol) imaging experiments. It is designed for visual stimulation and functional imaging data, but can be the basis for handling experiments with different datatypes and stimulation protocols, as well. The central idea behind the analysis approach is to get data from disparate sources (e.g. different microscopes or other recording devices) into a common datafile format, which can then be accessed and analyzed by a shared set of downstream analyses.
-
-
-Contact: Max Turner, mhturner@stanford.edu
 
 ## Installation
 - visanalysis has been tested with Python 3.9 and Python 3.6, on OSX and Linux. It may work on Windows, but it hasn't been tested.
