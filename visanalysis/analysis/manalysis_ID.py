@@ -214,7 +214,6 @@ class ImagingDataObject:
 
         return subject_metadata
 
-
     def getAcquisitionMetadata(self, metadata_key=None):
         """
         Return imaging acquisition metadata
@@ -525,7 +524,7 @@ class ImagingDataObject:
         roi_set_name,
         background_subtraction=False,
         roi_prefix="rois",
-        return_erm=True,
+        return_erm=False,
     ):
         """
         Get responses for indicated roi
@@ -576,8 +575,49 @@ class ImagingDataObject:
             )
             roi_data["epoch_response"] = response_matrix
             roi_data["time_vector"] = time_vector
+        else:
+            roi_data["time_vector"] = self.getResponseTiming()["time_vector"]
 
         return roi_data
+    
+    def getBaselineImageFrames(self, full_trace=False):
+        """
+        Get baseline frames for each epoch based on pre_time, the default baseline period is every [stim_start_time - pre_time, stim_start_time]
+        if full_trace is True, all frames will become baseline frames
+    
+
+        Returns:
+            baseline_frames: list ints of baseline frame indices
+
+        12092025 MZ created this function
+        """
+        baseline_frames = []
+        response_timing = self.getResponseTiming()['time_vector']
+
+        if full_trace:
+            total_frames = len(response_timing)
+            baseline_frames = [np.arange(total_frames)]
+            return baseline_frames
+        
+        baseline_end_times = self.getStimulusTiming()['stimulus_start_times']
+        pre_time_array = np.array(self.getEpochParameters('pre_time'))
+
+        baseline_start_times = baseline_end_times - pre_time_array[:len(baseline_end_times)]
+
+        for i in range(len(response_timing)):
+            tDiff = response_timing[i] - baseline_start_times
+            tDiffValid = tDiff[tDiff >= 0]
+
+            if tDiffValid.size == 0:
+                minDiffTime = -1
+            else:
+                numEpoch = np.where(tDiff >= 0)[0][-1]
+                minDiffFrame = np.argmin(tDiffValid)
+                minDiffTime = tDiffValid[minDiffFrame]
+                if minDiffTime < pre_time_array[numEpoch]:
+                    baseline_frames.append(i)
+            
+        return baseline_frames
 
     def getEpochResponseMatrix(self, region_response, dff=True):
         """

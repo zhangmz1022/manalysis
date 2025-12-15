@@ -8,38 +8,73 @@ import glob
 import h5py
 import numpy as np
 import matplotlib.pyplot as plt
+
+from scipy.optimize import curve_fit
 from visanalysis.util import plot_tools
 from collections.abc import Sequence
+import visanalysis.analysis.manalysis_ID as ImagingData
 
-def backgroundSubtract(ImagingData, roi_name):
-    pass
-
-def computeROIMatrixDFF(roi_response_matrix, baseline_window):
+def computeRoiDffResponse(ImagingData, roi_name):
     """
     Computes dF/F for a matrix of ROI responses by calling computeBaselineFittingDFF for each ROI
 
-    Params:
-        -roi_response_matrix: 2D np.array of shape (no_rois, no_timepoints)
-        -baseline_window: tuple of (start_time, end_time) for fitting baseline
-
     Returns:
-        -dff_response_matrix: 2D np.array of dF/F responses shape (no_rois, no_timepoints)
+         roi_dff_data (similar to roi_data in getRoiResponses): dict, keys:
+                        roi_dff: ndarry, shape = (rois, time)
+                        time_vector: 1d array, time point value from acquision
+                        roi_mask: list of ndarray masks, one for each roi in roi set
+                        roi_image: ndarray image showing roi overlay
     """
-    pass
+    roi_data = ImagingData.getRoiResponses(roi_name)
+    baseline_ind = ImagingData.getBaselineImageFrames()
 
-def computeBaselineFittingDFF(bksresponse, time_vector, baseline_window):
+    no_rois = len(roi_data.get('roi_response'))
+    roi_dff = np.zeros_like(roi_data.get('roi_response'))
+    time_vector = roi_data.get('time_vector')
+
+    for r_ind in range(no_rois):
+        roi_response = roi_data.get('roi_response')[r_ind][0]
+        roi_dff[r_ind, :] = computeBaselineFittingDFF(roi_response, time_vector, baseline_ind)
+
+    roi_dff_data = {
+        'roi_dff': roi_dff,
+        'time_vector': time_vector,
+        'roi_mask': roi_data.get('roi_mask'),
+        'roi_image': roi_data.get('roi_image')
+    }
+
+    return roi_dff_data
+
+def computeBaselineFittingDFF(response, time_vector, baseline_img_frames):
     """
     Computes dF/F by fitting F0 using a sum of two exponentials to the baseline period
 
     Params:
-        -bksresponse: 1D np.array of background subtracted single ROI response
-        -time_vector: 1D np.array of time points corresponding to bksresponse
-        -baseline_window: tuple of (start_time, end_time) for fitting baseline
+        -response: 1D np.array of background subtracted single ROI response
+        -time_vector: 1D np.array of time points corresponding to response
+        -baseline_img_frames: list or array of frame indices for fitting baseline
 
     Returns:
         -dff_response: 1D np.array of dF/F response
     """
-    pass
+    
+    def two_exp(x, a, b, c, d):
+        return a * np.exp(b * x) + c * np.exp(d * x)
+    
+    baseline_response = response[baseline_img_frames]
+    baseline_time = time_vector[baseline_img_frames]
+    initial_guess = [1, -0.1, 1, -0.01]
+
+    try:
+        popt, pcov = curve_fit(two_exp, baseline_time, baseline_response, p0=initial_guess, maxfev=10000)
+        fitted_baseline = two_exp(time_vector, *popt)
+
+    except:
+        fitted_baseline = np.zeros_like(response)
+
+    dff_response = (response - fitted_baseline) / (fitted_baseline + 1e-12)
+
+    return dff_response
 
 def getEpochResponseResampled(ImagingData, roi_name, epoch_index, resample_bin_frequency=120, dFF=True):
     """
@@ -54,11 +89,88 @@ def getEpochResponseResampled(ImagingData, roi_name, epoch_index, resample_bin_f
 
     Returns:
         -resampled_roi_response: dict with keys:
-            -'epoch_response': 2D np.array of shape (no_rois, no_resampled_timepoints_in_an_epoch)
-            -'time_vector': 1D np.array of time points corresponding to epoch_response
+            -'resampled_average_epoch_response': 2D np.array of shape (no_rois, no_resampled_timepoints_in_an_epoch)
+            -'time_vector': 1D np.array of time points corresponding to resampled_average_epoch_response
 
     """
-    pass
+
+    if dFF:
+        roi_data = computeRoiDffResponse(ImagingData, roi_name)
+    else:
+        roi_data = ImagingData.getRoiResponses(roi_name, return_erm=False) # non-dFF function is not ready, because getRoiResponses['roi_response'] returns a list instead of a np.array
+    
+    imaging_time = roi_data.get('time_vector')
+
+    stimulus_start_times = ImagingData.getStimulusTiming().get('stimulus_start_times')[epoch_index]
+    stimulus_end_times = ImagingData.getStimulusTiming().get('stimulus_end_times')[epoch_index]
+    real_stim_durations = stimulus_end_times - stimulus_start_times
+    real_stim_time = np.median(real_stim_durations)
+    #12112025 TODO: real stim time (end - start) are 0.024 or 0.008 (when specified as 0.02) 
+    # - is that common or just because the specified value is not multiple of projector refresh rate? seems better in longer stimulus
+
+    # use the shortest pre and tail time as a standard epoch
+    pre_time = np.min(ImagingData.getEpochParameters(param_key='pre_time'))
+    tail_time = np.min(ImagingData.getEpochParameters(param_key='tail_time'))
+    
+    #check if all stim_time are the same, if not, raise error, resampling cannot be done
+    stim_times = np.array(ImagingData.getEpochParameters(param_key='stim_time'))[epoch_index]
+    if not np.all(stim_times == stim_times[0]):
+        raise ValueError('All stim_time for the selected epochs must be the same for resampling!')
+    stim_time = stim_times[0]
+    
+    resample_fr = 1 / resample_bin_frequency
+    no_bins_pre_stim = int(np.ceil(pre_time * resample_bin_frequency))
+    no_bins_after_stim = int(np.ceil((stim_time + tail_time) * resample_bin_frequency))
+    no_bins = no_bins_pre_stim + no_bins_after_stim
+
+    pre_time_in_bin = no_bins_pre_stim * resample_fr
+    after_time_in_bin = no_bins_after_stim * resample_fr
+
+    # initialize resampled response matrix (is it legit to do zero or should it be nan?)
+    resampled_roi_response = np.zeros((len(roi_data.get('roi_dff')), no_bins))
+    resampled_sample_count = np.zeros((len(roi_data.get('roi_dff')), no_bins))
+    resampled_time_vector = []
+
+    # loop through each epoch to bin/resample to the resample_bin_frequency, using stim_start_time as reference
+    for ep in range(len(epoch_index)):
+        stim_present_time = stimulus_start_times[ep]
+        start_time = stim_present_time - pre_time_in_bin
+        end_time = stim_present_time + after_time_in_bin
+
+        # get time vector for this epoch
+        current_epoch_ind = np.where((imaging_time >= start_time) & (imaging_time < end_time))[0]
+        current_epoch_time_vector = imaging_time[current_epoch_ind]
+        current_epoch_response = roi_data.get('roi_dff')[:, 0, current_epoch_ind]
+
+        # create new resampled time vector, the time stamp is the start of each bin 
+        # (except for last bin which has both start and end time, because np.histogram need the rightmost edge)
+        # so len(resampled_time_vector) = no_bins_pre_stim + no_bins_after_stim + 1
+        resampled_epoch_time_vector = np.concatenate([np.linspace(stim_present_time - resample_fr * no_bins_pre_stim, stim_present_time, no_bins_pre_stim, endpoint=False), 
+                                 np.linspace(stim_present_time, stim_present_time + resample_fr * no_bins_after_stim, no_bins_after_stim + 1, endpoint=True)]) 
+
+        # bin the data
+        binned_epoch_response = np.zeros((current_epoch_response.shape[0], no_bins_pre_stim + no_bins_after_stim))
+        for roi in range(current_epoch_response.shape[0]):
+            binned_epoch_response[roi, :], _ = np.histogram(current_epoch_time_vector, bins=resampled_epoch_time_vector, weights=current_epoch_response[roi, :])
+            binned_epoch_sample_count, _ = np.histogram(current_epoch_time_vector, bins=resampled_epoch_time_vector)
+        
+        resampled_roi_response += binned_epoch_response
+        resampled_sample_count += binned_epoch_sample_count
+        resampled_time_vector = [resampled_time_vector, resampled_epoch_time_vector] # do we need this?
+
+    # average across epochs
+    resampled_average_epoch_response = resampled_roi_response / (resampled_sample_count + 1e-12)
+    # 12112025 TODO: calculate resampled SEM for each roi each bin (then need to store individual responses), is that necessary?
+
+
+    # unified in-epoch time vector
+    in_epoch_time_vector = np.linspace(-pre_time_in_bin, after_time_in_bin, no_bins, endpoint=False) + resample_fr / 2  # center of each bin
+
+    resampled_roi_response_dict = {
+        'resampled_average_epoch_response': resampled_average_epoch_response,
+        'time_vector': in_epoch_time_vector
+    }  
+    return resampled_roi_response_dict
 
 
 def matchQuery(epoch_parameters, query):
