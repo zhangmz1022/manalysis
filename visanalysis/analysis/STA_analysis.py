@@ -1,8 +1,5 @@
 """
-Shared analysis tools.
-
-https://github.com/ClandininLab/visanalysis
-mhturner@stanford.edu
+Manze's single trial analysis tools
 """
 import glob
 import h5py
@@ -172,51 +169,38 @@ def getEpochResponseResampled(ImagingData, roi_name, epoch_index, resample_bin_f
     }  
     return resampled_roi_response_dict
 
-
-def matchQuery(epoch_parameters, query):
+def getMatchingEpochIndices(ImagingData, query):
     """
-
-    params:
-        epoch_parameters: single epoch_parameter dict
-        query: dict, key-value pairs indicate matching parameter editable_values
-            e.g. query = {'current_intensity': 0.75}
-
+    Returns indices of epochs where parameters match the query.
+    Handles float comparison safely.
+    
+    Params:
+        ImagingData object.
+        query (dict): Dictionary of parameters to match (e.g. {'intensity': 0.5}).
+        
     Returns:
-        Bool, True if all param values match, false otherwise
+        list: Indices of epochs matching the query.
     """
-    return np.all([epoch_parameters.get(key) == query[key] for key in query])
-
-
-def filterTrials(epoch_response, ID, query, return_inds=False):
-    no_trials = epoch_response.shape[1]
-    matching_trials = np.where([matchQuery(ep, query) for ep in ID.getEpochParameters()[:no_trials]])[0]
-
-    if return_inds:
-        return epoch_response[:, matching_trials, :], matching_trials
-    else:
-        return epoch_response[:, matching_trials, :]
-
-
-def getUniqueParameterCombinations(param_keys, ID):
-    ep_params = [[ep.get(x, None) for x in param_keys]for ep in ID.getEpochParameters()]
-    return list({tuple(row) for row in ep_params})
-
-
-def plotResponseByCondition(ImagingData, roi_name, condition, eg_ind=0):
-    roi_data = ImagingData.getRoiResponses(roi_name)
-
-    unique_parameter_values = np.unique([ep.get(condition) for ep in ImagingData.getEpochParameters()])
-    fh, ax = plt.subplots(1, len(unique_parameter_values), figsize=(8, 2))
-    [x.set_axis_off() for x in ax]
-    [x.set_ylim([-0.25, 1.0]) for x in ax]
-    for p_ind, param_value in enumerate(unique_parameter_values):
-        query = {condition: param_value}
-        trials = filterTrials(roi_data.get('epoch_response'), ImagingData, query)
-        ax[p_ind].plot(roi_data.get('time_vector'), np.nanmean(trials[eg_ind, :, :], axis=0), linestyle='-', color=ImagingData.colors[0])
-
-        if p_ind == 0:  # scale bar
-            plot_tools.addScaleBars(ax[p_ind], dT=1, dF=0.5, F_value=-0.25, T_value=-0.2)
-
+    indices = []
+    for i, params in enumerate(ImagingData.getEpochParameters()):
+        match = True
+        for key, value in query.items():
+            param_value = params.get(key)
+            if param_value is None:
+                match = False
+                break
+            # Handle float comparison
+            if isinstance(value, float) and isinstance(param_value, float):
+                if not np.isclose(value, param_value):
+                    match = False
+                    break
+            else:
+                if value != param_value:
+                    match = False
+                    break
+        if match:
+            indices.append(i)
+    return indices
 
 def plotRoiResponses(ImagingData, roi_name):
     roi_data = ImagingData.getRoiResponses(roi_name)
@@ -241,10 +225,6 @@ def plotRoiResponses(ImagingData, roi_name):
 
         if r_ind == 0:  # scale bar
             plot_tools.addScaleBars(ax[r_ind], 1, 1, F_value=-0.1, T_value=-0.2)
-
-def plotSingleRoiResponseByCondition(ImagingData, roi_name, roi_ind, condition):
-    pass
-
 
 def filterDataFiles(data_directory,
                     target_fly_metadata={},
@@ -310,7 +290,6 @@ def filterDataFiles(data_directory,
         print('Found {} matching series'.format(len(matching_series)))
     return matching_series
 
-
 def checkAgainstTargetDict(target_dict, test_dict):
     for key in target_dict:
         if key in test_dict:
@@ -320,7 +299,6 @@ def checkAgainstTargetDict(target_dict, test_dict):
             return False  # Target key not in this series at all
 
     return True
-
 
 def areValsTheSame(target_val, test_val):
 
@@ -332,8 +310,8 @@ def areValsTheSame(target_val, test_val):
 
         return target_val == test_val
 
-    elif isinstance(target_val, (int, float)):  # Scalar
-        if isinstance(test_val, (int, float)):
+    elif isinstance(target_val, (int, float, np.integer, np.floating)):  # Scalar
+        if isinstance(test_val, (int, float, np.integer, np.floating)):
             return float(target_val) == float(test_val)  # Ignore type for int vs. float here
         else:
             return False
