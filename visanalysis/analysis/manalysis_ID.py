@@ -54,7 +54,7 @@ class ImagingDataObject:
         # For stimulus timing...
         self.timing_channel_ind = 0  # For multiple photodiode channels, which one to use to define stim timing?
         self.threshold = (
-            0.6,
+            0.3,
         )  # photodiode trace threshold for up/down finding. Normalized to 0-1
         self.frame_slop = (20,)  # datapoints +/- ideal frame duration
         self.command_frame_rate = 120  # Hz, expected frame rate for monitor
@@ -711,8 +711,6 @@ class ImagingDataObject:
             time_vector = time_vector[:min_frame_len]
 
         return time_vector, response_matrix
-
-
 
     # # # #  # # # # # # # # # CONVENIENCE METHODS # # # # # # # # # # # # # # # # # # # # # # # # # #
 
